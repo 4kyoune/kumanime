@@ -1,187 +1,327 @@
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { getAnimeDetails, getAnimeNews, getEpisodeDetails, getOngoingAnime } from "../../Hooks/Api";
-import IframeVideo from "../../components/fragments/IframeVideo/IframeVideo";
-import Aside from "../../components/fragments/Aside/Aside";
-import AsideCard from "../../components/elements/AsideCard/AsideCard";
-import Title from "../../components/elements/Title/Title";
-import { Helmet } from "react-helmet";
-import Loading from "../../components/layouts/Loading/Loading";
-import Slider from "../../components/layouts/Slider/Slider";
-import Card from "../../components/elements/Card/Card";
-import Navigation from "../../components/elements/Navigation/Navigation";
-import DetailCard from "../../components/elements/DetailCard/DetailCard";
+import React, { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useState } from "react";
+import HlsVideoPlayer from "./HlsVideoPlayer";
+import "../../main.css";
+import "./watch-anime.css";
+import loadingImage from "../../media/placeholder.gif";
+import RecommendedTopTen from "../../Layouts/RecommendedTopTen";
+import Share from "../../components/Share/Share";
+import LoadingSpinner from "../../components/LoadingSpinner";
+import { easeOut, motion } from "framer-motion";
 
-const Watch = () => {
-    const {slug} = useParams();
+import Error from "../../components/AnimeNotFound/Error";
+import {
+  useAnimeInfo,
+  useEpisodeFiles,
+  useSearch,
+  useServers,
+} from "../../hooks/useConsumet";
+export default function WatchAnime() {
+  const [descIsCollapsed, setDescIsCollapsed] = useState(true);
+  const [searchParams] = useSearchParams();
+  /**
+   * Since custom hook cannot be used inside of use Effect,
+   * variables are initialized outside of useEffect
+   * when the custom hooks returns the processed data from API it triggers the change in variable's value
+   * Hence triggers the useEffect which then stores the value of the varibale in state.
+   */
+  const searchResults = useSearch(searchParams.get("name"));
+  const subData = useAnimeInfo(searchResults?.sub?.id || null);
+  const dubData = useAnimeInfo(searchResults?.dub?.id || null);
 
-    const [epsData, setEpsData] = useState();
-    const [newsAnimeData, setNewsAnimeData] = useState([]);
-    const [ongoingAnime, setOngoingAnime] = useState([]);
-    const [streamQuality, setStreamQuality] = useState('sd');
-    const [animeData, setAnimeData] = useState();
+  /**
+   * When the value of the variables changes, the useEffect is triggered a state is initialized
+   * When the user changes the Server or Episode the component is re-rendered and the state is updated
+   *
+   * Without states the page would reload everything from the start the useEffect checks if the states already have a value
+   * if yes then it does not re-render the component or does not change the state
+   */
 
-    useEffect(() => {
-        async function ongoingAnime() {
-            try {
-                const result = await getOngoingAnime(1);
-                setOngoingAnime(result);
-            } catch (error) {
-                console.log(error);
-            }
-        }
+  const [subIsSelected, setSubIsSelected] = useState(true);
+  const [subInfo, setSubInfo] = useState({});
+  const [dubInfo, setDubInfo] = useState({});
+  const [selectedServer, setSelectedServer] = useState(0);
+  const [selectedEpisode, setSelectedEpisode] = useState(0);
+  const [quality, setQuality] = useState("default");
 
-        ongoingAnime()
-    }, [])
+  /**
+   * fetches servers from the API based on the user's selection of SUB ior DUB
+   */
+  const servers = useServers(
+    subIsSelected
+      ? subInfo?.episodes?.length > 0
+        ? subInfo.episodes[selectedEpisode].id
+        : null
+      : dubInfo?.episodes?.length > 0
+      ? dubInfo.episodes[selectedEpisode].id
+      : null
+  );
 
-    useEffect(() => {
-        async function epsDetails() {
-            try {
-                const result = await getEpisodeDetails(slug);
-                const animeDetailsResult = await getAnimeDetails(result.id);
-                setEpsData(result);
-                setAnimeData(animeDetailsResult);
-            } catch (error) {
-                console.log(error);
-            }
-        }
+  /**
+   * Based on the inforamtion from useAnimeInfo hook, the episodes array is stored in a variable
+   * with 'id' of each episode
+   */
+  let episodeList = subIsSelected
+    ? subInfo?.episodes?.length > 0
+      ? subInfo.episodes
+      : null
+    : dubInfo?.episodes?.length > 0
+    ? dubInfo.episodes
+    : null;
 
-        epsDetails()
-    }, [slug])
+  /**
+   * based on the values of selectedServer and selectedEpisode state the hook fetches the sources from the API
+   * these sources are then used to play the video and include links to video files of different quality
+   */
+  const episodesData = useEpisodeFiles(
+    servers && episodeList
+      ? { server: servers[selectedServer], id: episodeList[selectedEpisode].id }
+      : { server: null, id: null }
+  );
 
-    useEffect(() => {
-        async function animeNews() {
-            try {
-                const result = await getAnimeNews();
-                setNewsAnimeData(result);
-            } catch (error) {
-                console.log(error);
-            }
-        }
+  /**
+   * Creates an array of qualities available for an episode
+   */
+  const episodeQuality = episodesData?.sources?.map((el) => {
+    return { quality: el.quality, url: el.url };
+  });
 
-        animeNews()
-    }, [])
+  /**
+   * when the custom hook fetches search results from the API it changes the values of
+   * subData and dubData variables
+   *
+   * when the value of these variables change the useEffect is triggered and the state is updated
+   *
+   * Checks if the state is empty and if the custom hook has returned the data from the API
+   *
+   * if the state already has the data it does not change the state(prevents re-rendering on change of episode or server)
+   */
+  useEffect(() => {
+    if (subData && Object.keys(subInfo).length === 0) {
+      setSubInfo(() => subData);
+    }
+    if (dubData && Object.keys(dubInfo).length === 0) {
+      setDubInfo(() => dubData);
+    }
+  }, [subData, dubData]);
 
+  /**
+   * Checks if subAnime or dubAnime is available
+   * In some cases only sub in available and in other only dub
+   *
+   * if subAnime is available then it sets the subIsSelected state to true
+   * if dubAnime is available then it sets the subIsSelected state to false
+   *
+   */
+  useEffect(() => {
+    if (Object.keys(subInfo).length) {
+      setSubIsSelected(true);
+    }
+    if (Object.keys(dubInfo).length) {
+      setSubIsSelected(false);
+    }
+  }, [subInfo, dubInfo]);
+
+  // Server and episode buttons to change the respective item
+  const serverButtons = servers?.map((el, idx) => {
     return (
-        <>
-            {(epsData && animeData && newsAnimeData && ongoingAnime.status === "success") ? (
-                <>
-                <Helmet>
-                    <title>Nonton {epsData.title}</title>
-                    <link rel="shortcut icon" type="image/x-icon" href="logo.png" />
-                    <meta
-                    name="description"
-                    content={`Nonton Anime ${epsData.title} - Kumanime`}
-                    />
-                    <meta name="robots" content="index, follow" />
-                    <meta
-                    property="og:title"
-                    content={`Nonton ${epsData.title} - Kumanime`}
-                    />
-                    <meta
-                    property="og:description"
-                    content={`Nonton Anime ${epsData.title} - Kumanime`}
-                    />
-                    <meta
-                    property="og:image"
-                    content="https://raw.githubusercontent.com/MastayY/kumanime/main/public/logo.png"
-                    />
-                    <meta property="og:locale" content="id_ID" />
-                    <meta property="og:type" content="article" />
-                    <meta property="og:site_name" content="Kumanime.FUN" />
-                    <meta name="twitter:card" content="summary_large_image" />
-                    <meta name="googlebot" content="index, follow" />
-                    <meta name="twitter:title" content={`Nonton ${epsData.title} - Kumanime`} />
-                    <meta name="twitter:card" content="summary_large_image" />
-                    <meta name="keywords" content="kumanime, otakudesu, kuronime, kuramanime, web streaming anime, moenime, moenime id, moenime list, moe anime, anime batch indonesia, anime batch sub indo, animebatch sub indo, anime batch terbaru, download anime batch subtitle indonesia, situs download anime, anime sub indo, download anime sub indo, download anime subtitle indonesia, download anime terbaru, download anime bd, download anime movie, download anime batch, download anime batch sub indo, download anime batch subtitle indonesia terlengkap, streaming anime, streaming anime sub indo, streaming anime subtitle indonesia, streaming anime sub indo lengkap" />
-                    <meta
-                    name="twitter:description"
-                    content="Nonton Anime Online Sub Indo Gratis di KUMANIME.FUN"
-                    />
-                    <meta
-                    name="twitter:image"
-                    content="https://raw.githubusercontent.com/MastayY/kumanime/main/public/logo.png"
-                    />
-                </Helmet>
-                <div className="grid grid-cols-1 lg:grid-cols-10 gap-7 py-7 px-3 md:px-7 bg-bg-kumanime text-white">
-                    <div className="lg:col-span-7">
-                        <div>
-                            <h1 className="font-bold text-xl md:text-3xl py-3 px-3 mb-3">Nonton {epsData.title}</h1>
-                            <IframeVideo 
-                                title={epsData.title}
-                                streamUrl={epsData.stream_link}
-                                quality={streamQuality}
-                            />
-                            <Navigation 
-                                prevSlug={epsData.prev_eps_slug}
-                                nextSlug={epsData.next_eps_slug}
-                                slug={epsData.id}
-                            />
-                            <div className="my-3 p-2 text-sm md:text-base border-kumanime border font-poppins">
-                                <div className="flex gap-2 font-semibold items-center justify-center ">
-                                    <p>Kualitas : </p>
-                                    <button className={streamQuality === 'sd' ? `py-1 px-2 rounded-sm bg-kumanime` : `py-1 px-2 rounded-sm`} onClick={() => setStreamQuality('sd')}>SD 480p</button>
-                                    <button className={streamQuality === 'hd' ? `py-1 px-2 rounded-sm bg-kumanime` : `py-1 px-2 rounded-sm`} onClick={() => setStreamQuality('hd')}>HD 720p</button>
-                                </div>
-                                <p className="text-center text-[11px] mt-2">*Kualitas HD tidak selalu ada karena limitasi akses ke server sumber</p>
-                            </div>
-                            <DetailCard
-                                title={animeData.title}
-                                poster={animeData?.thumb}
-                                synopsis={animeData?.synopsis}
-                                slug={animeData.anime_id}
-                            />
-                        </div>
-                        <div className="my-6">
-                            <Title>Rekomendasi Anime</Title>
-                            <Slider>
-                                {
-                                    ongoingAnime.animeList.map((data, index) => {
-                                        return(
-                                            <div className="swiper-slide" key={index}>
-                                                <Card
-                                                    key={index}
-                                                    imgUrl={data.thumb}
-                                                    href={`/anime/${data.id}`}
-                                                    title={data.title}
-                                                    episode={data.episode}
-                                                    rating="Baru"
-                                                />
-                                            </div>
-                                        )
-                                    })
-                                }
-                            </Slider>
-                        </div>
-                    </div>
-                    <div className="lg:col-span-3 mt-0 lg:mt-16 px-3">
-                        <Title>Berita</Title>
-                        <div className="bg-bg-kumanime-semi">
-                            <Aside>
-                                {
-                                    newsAnimeData ? (newsAnimeData.slice(0, 5).map((data, index) => {
-                                        return (
-                                            <AsideCard
-                                                key={index}
-                                                imgUrl={data.thumbnail}
-                                                title={data.title}
-                                                href={data.url}
-                                                topics={data.topics}
-                                                uploaded={data.uploadedAt}
-                                            />
-                                        )
-                                    })) : <p>Loading...</p>
-                                }
-                            </Aside>
-                        </div>
-                    </div>
-                </div>
-                </>
-            ) : (
-                <Loading />
-            )}
-        </>
+      <span
+        className={`server-tile ${selectedServer === idx ? "selected" : ""}`}
+        key={el.name}
+        onClick={() => setSelectedServer(idx)}
+      >
+        {el.name}
+      </span>
     );
-}
+  });
 
-export default Watch
+  const episodeButtons = episodeList?.map((el, idx) => {
+    return (
+      <span
+        className={`episode-tile ${idx === selectedEpisode ? "selected" : ""}`}
+        key={el.id}
+        style={
+          episodeList.length < 10 ? { minWidth: "100%", borderRadius: 0 } : null
+        }
+        onClick={() => setSelectedEpisode(idx)}
+      >
+        {episodeList.length < 10 ? ` Episode: ` + el.number : el.number}
+      </span>
+    );
+  });
+  const qualityButtons = episodeQuality?.map((el) => {
+    return (
+      <option
+        key={el.quality}
+        style={{ color: "white" }}
+        className={`episode-tile ${el.quality === quality ? "selected" : ""}`}
+        value={el.quality}
+      >
+        {el.quality.toUpperCase()}
+      </option>
+    );
+  });
+  if (searchResults?.noAnime) {
+    return <Error />;
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ x: [window.innerWidth / 2, 0], opacity: 1 }}
+      transition={{ duration: 0.7, ease: easeOut }}
+    >
+      {Object.keys(subInfo).length > 0 || Object.keys(dubInfo).length > 0 ? (
+        <div style={{ marginTop: "65px" }} className="watch-container d-flex">
+          <img
+            className="watch-container-background"
+            src={subIsSelected ? subInfo?.image : dubInfo?.image}
+          />
+          <div className="media-center d-flex">
+            <div className="episode-container">
+              <p>List of Episodes:</p>
+              <div className="episode-tiles-wrapper d-flex a-center">
+                {episodeList?.length > 0 ? episodeButtons : <LoadingSpinner />}
+              </div>
+            </div>
+
+            <div className="video-player">
+              <div className="hls-container">
+                {episodeQuality?.length > 0 ? (
+                  <HlsVideoPlayer
+                    url={
+                      episodeQuality?.find((el) => el.quality === quality)?.url
+                    }
+                  />
+                ) : (
+                  <div
+                    className="d-flex a-center j-center"
+                    style={{ height: "100%" }}
+                  >
+                    <img
+                      src={loadingImage}
+                      style={{
+                        display: "block",
+                        height: 100,
+                        width: 100,
+                        margin: "auto",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="server-container d-flex-fd-column">
+                <div className="server-tile-wrapper d-flex-fd-column">
+                  <div>
+                    Language Preference:{" "}
+                    {/**
+                     * Checks if the anime has dub or sub and displays the respective button
+                     * If the anime has both dub and sub then it displays both the buttons
+                     * If the anime episode has only dub or sub then it displays only that button
+                     */}
+                    {dubInfo?.episodes?.length > 0 &&
+                      selectedEpisode < dubInfo?.episodes?.length && (
+                        <span
+                          className={`server-tile ${
+                            !subIsSelected ? "selected" : ""
+                          }`}
+                          onClick={() => setSubIsSelected(false)}
+                        >
+                          Dub
+                        </span>
+                      )}
+                    {subInfo?.episodes?.length > 0 &&
+                      selectedEpisode < subInfo?.episodes?.length && (
+                        <span
+                          className={`server-tile ${
+                            subIsSelected ? "selected" : ""
+                          }`}
+                          onClick={() => setSubIsSelected(true)}
+                        >
+                          Sub
+                        </span>
+                      )}
+                  </div>
+                  <div>
+                    Servers:{" "}
+                    {servers?.length > 0 ? (
+                      serverButtons
+                    ) : (
+                      <img
+                        src={loadingImage}
+                        style={{ height: 100, width: 100 }}
+                      />
+                    )}
+                  </div>
+                  <div>
+                    Quality:
+                    <select
+                      style={{
+                        width: "100px",
+                        marginLeft: 10,
+                        background: "var(--theme)",
+                      }}
+                      className={`episode-tile`}
+                      onChange={(e) => setQuality(e.target.value)}
+                      value={quality}
+                    >
+                      {qualityButtons}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="current-anime-details ">
+            <img
+              className="details-container-background"
+              src={subIsSelected ? subInfo.image : dubInfo.image || "NA"}
+            />
+            <div className="anime-details d-flex-fd-column">
+              <img
+                className="anime-details-poster"
+                src={subIsSelected ? subInfo.image : dubInfo.image || "NA"}
+              />
+
+              <div className="anime-details-content d-flex-fd-column">
+                <h1 style={{ textAlign: "center" }} className="title-large">
+                  {subIsSelected ? subInfo.title : dubInfo.title}
+                </h1>
+
+                <p>
+                  {subIsSelected
+                    ? descIsCollapsed
+                      ? subInfo.description?.slice(0, 150) + "..."
+                      : subInfo.description
+                    : descIsCollapsed
+                    ? dubInfo.description?.slice(0, 150) + "..."
+                    : dubInfo.description}
+                  <span
+                    style={{ cursor: "pointer" }}
+                    onClick={() => setDescIsCollapsed((prev) => !prev)}
+                  >
+                    [ {descIsCollapsed ? "More" : "Less"} ]
+                  </span>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : !(subInfo && dubInfo) ? (
+        <Error />
+      ) : (
+        <LoadingSpinner />
+      )}
+
+      <Share
+        style={{
+          paddingInline: 20,
+        }}
+      />
+
+      <RecommendedTopTen />
+    </motion.div>
+  );
+}
